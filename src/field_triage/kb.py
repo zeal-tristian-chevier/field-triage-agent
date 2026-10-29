@@ -32,10 +32,12 @@ class Retriever:
         if self._collection is None:
             import chromadb
 
+            # upsert, not add: the ephemeral client is shared in-process, so a second
+            # Retriever would hit duplicate ids and silently fall back to BM25.
             # Ephemeral: 18 docs rebuild in well under a second, so no on-disk
             # index to go stale or commit by accident.
             col = chromadb.EphemeralClient().get_or_create_collection("kb")
-            col.add(
+            col.upsert(
                 ids=[s["id"] for s in self.snippets],
                 documents=[s["title"] + ". " + s["text"] for s in self.snippets],
             )
