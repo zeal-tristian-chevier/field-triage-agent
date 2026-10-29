@@ -1,0 +1,32 @@
+name: eval-full
+
+# Manual only: the full 30-case run with the LLM judge costs real money
+on:
+  workflow_dispatch:
+    inputs:
+      min_accuracy:
+        description: Severity accuracy threshold for the gate
+        default: "0.8"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      LANGSMITH_TRACING: "true"
+      LANGSMITH_PROJECT: field-triage-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run python -m evals.run_eval --subset full --experiment "full-${{ github.run_number }}"
+      - name: Job summary
+        if: always()
+        run: cat results/latest.md >> "$GITHUB_STEP_SUMMARY"
+      - run: uv run python -m evals.gate results/latest.json --min-accuracy "${{ inputs.min_accuracy }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-results
+          path: results/

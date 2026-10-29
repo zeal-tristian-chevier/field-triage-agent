@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      # Unit tests mock the LLM: no secrets needed, so they run on fork PRs too
+      - run: uv run pytest -q
+
+  eval-smoke:
+    needs: test
+    # Secrets are not exposed to PRs from forks, so skip there instead of failing
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      LANGSMITH_TRACING: "true"
+      LANGSMITH_PROJECT: field-triage-agent-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Check secrets
+        id: secrets
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY not configured; skipping smoke eval"
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+      # 10-case subset keeps PR cost and time low; the full set runs from eval.yml
+      - name: Smoke eval
+        if: steps.secrets.outputs.have == 'true'
+        run: uv run python -m evals.run_eval --subset smoke --experiment "pr-${{ github.event.pull_request.number }}-${{ github.run_number }}"
+      - name: Regression gate
+        if: steps.secrets.outputs.have == 'true'
+        run: |
+          uv run python -m evals.gate results/latest.json
+      - name: Job summary
+        if: always() && steps.secrets.outputs.have == 'true'
+        run: cat results/latest.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.secrets.outputs.have == 'true'
+        with:
+          name: smoke-results
+          path: results/
