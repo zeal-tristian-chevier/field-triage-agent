@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .kb import Retriever
 from .nodes import make_nodes
+from .observability import log, run_config, setup_logging, trace_id_var, traced_node, tracing_enabled
 from .schema import Draft, NodeError, ParsedReport, Severity, ToolResult, TriageResult
 
 
@@ -36,7 +37,7 @@ def build_graph(llm, retriever):
     n = make_nodes(llm, retriever)
     g = StateGraph(State)
     for name, fn in n.items():
-        g.add_node(name, fn)
+        g.add_node(name, traced_node(name, fn))
 
     g.add_edge(START, "parse_report")
     # A fatal error skips the middle and lets validate return human review
@@ -55,17 +56,32 @@ def build_graph(llm, retriever):
 
 
 def run_triage(report: str, llm=None, retriever=None, trace_id: str | None = None, config=None) -> State:
-    """Run one report through the graph and return the final state."""
+    """Run one report through the graph and return the final state.
+
+    `config` lets the eval harness add tags/metadata; it is merged over the defaults.
+    """
+    setup_logging()
+    trace_id = trace_id or str(uuid.uuid4())
+    trace_id_var.set(trace_id)
     if llm is None:
         from .config import default_llm
 
         llm = default_llm()
     graph = build_graph(llm, retriever or Retriever())
     initial: State = {
-        "trace_id": trace_id or str(uuid.uuid4()),
+        "trace_id": trace_id,
         "report": report,
         "errors": [],
         "attempts": 0,
         "retry": False,
     }
-    return graph.invoke(initial, config=config)
+    cfg = run_config(trace_id, **(config or {}))
+    log.info("run_start", extra={"fields": {"tracing": tracing_enabled()}})
+    state = graph.invoke(initial, config=cfg)
+    final = state["final"]
+    log.info(
+        "run_done",
+        extra={"fields": {"severity": final.severity, "floor": final.severity_floor,
+                          "floor_enforced": final.floor_enforced, "needs_human_review": final.needs_human_review}},
+    )
+    return state

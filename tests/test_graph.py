@@ -2,11 +2,12 @@ from field_triage.graph import run_triage
 
 from .conftest import BrokenRetriever, FakeLLM, draft, hot_pump
 
+TID = "11111111-1111-4111-8111-111111111111"
 REPORT = "Pump P-104 vibrating, bearing temp 92C, last serviced 14 months ago"
 
 
 def run(llm, retriever):
-    return run_triage(REPORT, llm=llm, retriever=retriever, trace_id="t-1")
+    return run_triage(REPORT, llm=llm, retriever=retriever, trace_id=TID)
 
 
 def test_happy_path_returns_cited_tool_results(bm25_retriever):
@@ -14,7 +15,7 @@ def test_happy_path_returns_cited_tool_results(bm25_retriever):
     final = state["final"]
     assert final.severity == "high" and not final.floor_enforced and not final.needs_human_review
     assert [r.id for r in final.tool_results_used] == ["threshold:bearing_temp_c", "severity_floor"]
-    assert final.trace_id == "t-1"
+    assert final.trace_id == TID
 
 
 def test_llm_below_floor_is_retried_then_accepted(bm25_retriever):
